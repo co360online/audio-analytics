@@ -27,6 +27,10 @@ class CO360_Audio_Analytics {
         // Admin
         add_action('admin_menu',            [$this, 'admin_menu']);
         add_action('admin_enqueue_scripts', [$this, 'admin_enqueue']);
+        add_action('admin_notices',         [$this, 'render_admin_notices']);
+        add_action('admin_post_co360_delete_all_stats',     [$this, 'handle_delete_all_stats']);
+        add_action('admin_post_co360_delete_stats_by_date', [$this, 'handle_delete_stats_by_date']);
+        add_action('admin_post_co360_delete_stats_by_audio',[$this, 'handle_delete_stats_by_audio']);
 
         // Export CSV/Excel backend
         add_action('admin_init',            [$this, 'maybe_export_admin']);
@@ -419,6 +423,89 @@ class CO360_Audio_Analytics {
             <p><?php esc_html_e('Comparativa de número de reproducciones y tiempo total reproducido.', 'co360'); ?></p>
 
             <canvas id="co360-audio-chart" style="max-width: 900px; max-height: 500px;"></canvas>
+
+            <?php $this->render_data_cleanup_section(); ?>
+        </div>
+        <?php
+    }
+
+    private function render_data_cleanup_section() {
+        if (!current_user_can('manage_options')) return;
+
+        $audios      = $this->get_all_audio_meta();
+        $admin_post  = admin_url('admin-post.php');
+        $warning_css = 'background:#fef3f2;border:1px solid #c1351d;padding:16px;max-width:900px;margin-top:30px;';
+        ?>
+        <div style="<?php echo esc_attr($warning_css); ?>">
+            <h2 style="margin-top:0; color:#c1351d;">
+                <?php esc_html_e('Gestión de estadísticas / Limpieza de datos', 'co360'); ?>
+            </h2>
+            <p><?php esc_html_e('Acciones sensibles: solo afecta a estadísticas, no a los metadatos de los audios.', 'co360'); ?></p>
+
+            <hr />
+
+            <h3 style="color:#c1351d;">
+                <?php esc_html_e('Opción A — Borrado completo', 'co360'); ?>
+            </h3>
+            <form method="post" action="<?php echo esc_url($admin_post); ?>" onsubmit="return confirm('<?php echo esc_js(__('¿Seguro que quieres borrar todas las estadísticas?', 'co360')); ?>');">
+                <?php wp_nonce_field('co360_delete_all_stats'); ?>
+                <input type="hidden" name="action" value="co360_delete_all_stats" />
+                <p>
+                    <button type="submit" class="button button-secondary" style="border-color:#c1351d; color:#c1351d;">
+                        <?php esc_html_e('Borrar todas las estadísticas', 'co360'); ?>
+                    </button>
+                </p>
+            </form>
+
+            <hr />
+
+            <h3 style="color:#c1351d;">
+                <?php esc_html_e('Opción B — Borrado por rango de fechas', 'co360'); ?>
+            </h3>
+            <form method="post" action="<?php echo esc_url($admin_post); ?>" onsubmit="return confirm('<?php echo esc_js(__('¿Seguro que quieres borrar las estadísticas del rango indicado?', 'co360')); ?>');" style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">
+                <?php wp_nonce_field('co360_delete_stats_by_date'); ?>
+                <input type="hidden" name="action" value="co360_delete_stats_by_date" />
+
+                <label>
+                    <?php esc_html_e('Desde (YYYY-MM-DD)', 'co360'); ?><br />
+                    <input type="date" name="date_from" required />
+                </label>
+
+                <label>
+                    <?php esc_html_e('Hasta (YYYY-MM-DD)', 'co360'); ?><br />
+                    <input type="date" name="date_to" required />
+                </label>
+
+                <button type="submit" class="button">
+                    <?php esc_html_e('Borrar estadísticas del periodo', 'co360'); ?>
+                </button>
+            </form>
+
+            <hr />
+
+            <h3 style="color:#c1351d;">
+                <?php esc_html_e('Opción C — Borrado por audio', 'co360'); ?>
+            </h3>
+            <form method="post" action="<?php echo esc_url($admin_post); ?>" onsubmit="return confirm('<?php echo esc_js(__('¿Seguro que quieres borrar las estadísticas del audio seleccionado?', 'co360')); ?>');" style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">
+                <?php wp_nonce_field('co360_delete_stats_by_audio'); ?>
+                <input type="hidden" name="action" value="co360_delete_stats_by_audio" />
+
+                <label>
+                    <?php esc_html_e('Selecciona un audio', 'co360'); ?><br />
+                    <select name="audio_id" required>
+                        <option value=""><?php esc_html_e('Elige un audio', 'co360'); ?></option>
+                        <?php foreach ($audios as $audio): ?>
+                            <option value="<?php echo esc_attr($audio->audio_id); ?>">
+                                <?php echo esc_html($audio->title . ' (' . $audio->audio_id . ')'); ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </label>
+
+                <button type="submit" class="button">
+                    <?php esc_html_e('Borrar estadísticas de este audio', 'co360'); ?>
+                </button>
+            </form>
         </div>
         <?php
     }
@@ -571,6 +658,107 @@ class CO360_Audio_Analytics {
         }
 
         $this->export_stats($rows, $type);
+        exit;
+    }
+
+    public function render_admin_notices() {
+        if (!is_admin()) return;
+
+        $page = isset($_GET['page']) ? sanitize_text_field($_GET['page']) : '';
+        if ($page !== self::MENU_SLUG) return;
+
+        $message = isset($_GET['co360_notice']) ? sanitize_text_field(wp_unslash($_GET['co360_notice'])) : '';
+        $type    = isset($_GET['co360_notice_type']) ? sanitize_text_field(wp_unslash($_GET['co360_notice_type'])) : '';
+
+        if (!$message) return;
+
+        $message = rawurldecode($message);
+
+        $class = $type === 'error' ? 'notice notice-error' : 'notice notice-success';
+        ?>
+        <div class="<?php echo esc_attr($class); ?>">
+            <p><?php echo esc_html($message); ?></p>
+        </div>
+        <?php
+    }
+
+    public function handle_delete_all_stats() {
+        if (!current_user_can('manage_options')) wp_die(__('No tienes permisos suficientes.', 'co360'));
+        check_admin_referer('co360_delete_all_stats');
+
+        $this->delete_all_stats();
+
+        $url = add_query_arg([
+            'page'               => self::MENU_SLUG,
+            'co360_notice'       => rawurlencode(__('Se han borrado todas las estadísticas.', 'co360')),
+            'co360_notice_type'  => 'success',
+        ], admin_url('admin.php'));
+
+        wp_safe_redirect($url);
+        exit;
+    }
+
+    public function handle_delete_stats_by_date() {
+        if (!current_user_can('manage_options')) wp_die(__('No tienes permisos suficientes.', 'co360'));
+        check_admin_referer('co360_delete_stats_by_date');
+
+        $from = isset($_POST['date_from']) ? sanitize_text_field($_POST['date_from']) : '';
+        $to   = isset($_POST['date_to'])   ? sanitize_text_field($_POST['date_to'])   : '';
+
+        $error = '';
+        if (!$this->is_valid_date($from) || !$this->is_valid_date($to)) {
+            $error = __('Las fechas deben tener formato YYYY-MM-DD.', 'co360');
+        } elseif ($from > $to) {
+            $error = __('La fecha inicial no puede ser mayor que la final.', 'co360');
+        }
+
+        if ($error) {
+            $url = add_query_arg([
+                'page'              => self::MENU_SLUG,
+                'co360_notice'      => rawurlencode($error),
+                'co360_notice_type' => 'error',
+            ], admin_url('admin.php'));
+            wp_safe_redirect($url);
+            exit;
+        }
+
+        $this->delete_stats_by_date($from, $to);
+
+        $url = add_query_arg([
+            'page'               => self::MENU_SLUG,
+            'co360_notice'       => rawurlencode(sprintf(__('Estadísticas borradas entre %s y %s.', 'co360'), $from, $to)),
+            'co360_notice_type'  => 'success',
+        ], admin_url('admin.php'));
+
+        wp_safe_redirect($url);
+        exit;
+    }
+
+    public function handle_delete_stats_by_audio() {
+        if (!current_user_can('manage_options')) wp_die(__('No tienes permisos suficientes.', 'co360'));
+        check_admin_referer('co360_delete_stats_by_audio');
+
+        $audio_id = isset($_POST['audio_id']) ? sanitize_text_field($_POST['audio_id']) : '';
+
+        if (!$audio_id) {
+            $url = add_query_arg([
+                'page'              => self::MENU_SLUG,
+                'co360_notice'      => rawurlencode(__('Debes seleccionar un audio válido.', 'co360')),
+                'co360_notice_type' => 'error',
+            ], admin_url('admin.php'));
+            wp_safe_redirect($url);
+            exit;
+        }
+
+        $this->delete_stats_by_audio($audio_id);
+
+        $url = add_query_arg([
+            'page'               => self::MENU_SLUG,
+            'co360_notice'       => rawurlencode(sprintf(__('Estadísticas borradas para el audio %s.', 'co360'), $audio_id)),
+            'co360_notice_type'  => 'success',
+        ], admin_url('admin.php'));
+
+        wp_safe_redirect($url);
         exit;
     }
 
@@ -1285,6 +1473,44 @@ class CO360_Audio_Analytics {
     /*=====================================================
      * DATA HELPERS
      *====================================================*/
+
+    private function is_valid_date($date) {
+        return (bool) preg_match('/^\d{4}-\d{2}-\d{2}$/', $date);
+    }
+
+    private function get_all_audio_meta() {
+        global $wpdb;
+        $meta = $wpdb->prefix . self::DB_META;
+
+        return $wpdb->get_results("SELECT audio_id, COALESCE(title, audio_id) AS title FROM $meta ORDER BY title ASC");
+    }
+
+    private function delete_all_stats() {
+        global $wpdb;
+        $totals   = $wpdb->prefix . self::DB_TOT;
+        $sessions = $wpdb->prefix . self::DB_SES;
+
+        $wpdb->query("DELETE FROM $totals");
+        $wpdb->query("DELETE FROM $sessions");
+    }
+
+    private function delete_stats_by_date($from, $to) {
+        global $wpdb;
+        $totals   = $wpdb->prefix . self::DB_TOT;
+        $sessions = $wpdb->prefix . self::DB_SES;
+
+        $wpdb->query($wpdb->prepare("DELETE FROM $totals WHERE date BETWEEN %s AND %s", $from, $to));
+        $wpdb->query($wpdb->prepare("DELETE FROM $sessions WHERE date BETWEEN %s AND %s", $from, $to));
+    }
+
+    private function delete_stats_by_audio($audio_id) {
+        global $wpdb;
+        $totals   = $wpdb->prefix . self::DB_TOT;
+        $sessions = $wpdb->prefix . self::DB_SES;
+
+        $wpdb->delete($totals, ['audio_id' => $audio_id], ['%s']);
+        $wpdb->delete($sessions, ['audio_id' => $audio_id], ['%s']);
+    }
 
     private function get_stats($date_from = '', $date_to = '') {
         global $wpdb;
